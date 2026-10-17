@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+
 import pytest
 import torch
 
+import flag_gems
 from flag_gems.ops.rms_norm_w8a16_fp8 import rms_norm_w8a16_fp8
 
 from . import base
+from .test_blas_perf_parallel import ParallelBenchmarkMixin
 
 
 @pytest.mark.rms_norm
@@ -112,4 +116,83 @@ def test_rms_norm_w8a16_fp8():
         dtypes=[torch.bfloat16],
     )
     bench.set_gems(_gems_rms_norm_w8a16)
+    bench.run()
+
+
+RMS_NORM_INT8_AVAILABLE = "rms_norm_w8a16_int8" in dict(
+    flag_gems.runtime.backend.get_ops(flag_gems.vendor_name)
+)
+RMS_NORM_INT8_EPS = 1e-5
+
+
+def make_rms_norm_int8_inputs(
+    shape: tuple[int, int],
+    dtype: torch.dtype,
+    device: str,
+    group_size: int = GROUP_SIZE,
+    scale_dtype: torch.dtype = torch.float32,
+) -> tuple[torch.Tensor, tuple[int], torch.Tensor, torch.Tensor, torch.Tensor]:
+    torch.manual_seed(0)
+    num_columns = shape[1]
+    activation = torch.randn(shape, device=device, dtype=dtype)
+    weight_int8 = torch.randint(
+        -127, 128, (num_columns,), device=device, dtype=torch.int8
+    )
+    num_groups = (num_columns + group_size - 1) // group_size
+    weight_scale = (torch.rand(num_groups, device=device) / 127).to(scale_dtype)
+    weight_ref = (
+        weight_int8.float()
+        * weight_scale.float().repeat_interleave(group_size)[:num_columns]
+    ).to(dtype)
+    return activation, (num_columns,), weight_int8, weight_scale, weight_ref
+
+
+def torch_rms_norm_int8_reference(
+    activation: torch.Tensor,
+    normalized_shape: tuple[int],
+    weight_int8: torch.Tensor,
+    weight_scale: torch.Tensor,
+    weight_ref: torch.Tensor,
+) -> torch.Tensor:
+    return torch.nn.functional.rms_norm(
+        activation, normalized_shape, weight_ref, eps=RMS_NORM_INT8_EPS
+    )
+
+
+def gems_rms_norm_int8(
+    activation: torch.Tensor,
+    normalized_shape: tuple[int],
+    weight_int8: torch.Tensor,
+    weight_scale: torch.Tensor,
+    weight_ref: torch.Tensor,
+) -> torch.Tensor:
+    return flag_gems.rms_norm_w8a16_int8(
+        activation, normalized_shape, weight_int8, weight_scale, eps=RMS_NORM_INT8_EPS
+    )
+
+
+class RmsNormInt8Benchmark(ParallelBenchmarkMixin, base.Benchmark):
+    DEFAULT_SHAPE_DESC = "M, N"
+
+    def get_input_iter(
+        self, dtype: torch.dtype
+    ) -> Iterator[
+        tuple[torch.Tensor, tuple[int], torch.Tensor, torch.Tensor, torch.Tensor]
+    ]:
+        for shape in self.shapes:
+            yield make_rms_norm_int8_inputs(tuple(shape), dtype, self.device)
+
+
+@pytest.mark.rms_norm_w8a16_int8
+@pytest.mark.skipif(
+    not RMS_NORM_INT8_AVAILABLE,
+    reason="RMSNorm INT8 implementation is not registered for this backend",
+)
+def test_rms_norm_w8a16_int8() -> None:
+    bench = RmsNormInt8Benchmark(
+        op_name="rms_norm_w8a16_int8",
+        torch_op=torch_rms_norm_int8_reference,
+        dtypes=[torch.bfloat16, torch.float16],
+    )
+    bench.set_gems(gems_rms_norm_int8)
     bench.run()

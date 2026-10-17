@@ -17,6 +17,7 @@ import pytest
 import torch
 
 import flag_gems
+from benchmark.test_rms_norm import RMS_NORM_INT8_AVAILABLE, make_rms_norm_int8_inputs
 from flag_gems.ops.rms_norm_w8a16_fp8 import rms_norm_w8a16_fp8
 
 from . import accuracy_utils as utils
@@ -100,6 +101,70 @@ def test_rms_norm(shape, dtype):
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(res_grad, ref_grad, dtype)
     utils.gems_assert_close(res_weight_grad, ref_weight_grad, dtype, reduce_dim=N)
+
+
+@pytest.mark.rms_norm_w8a16_int8
+@pytest.mark.skipif(
+    not RMS_NORM_INT8_AVAILABLE,
+    reason="RMSNorm INT8 implementation is not registered for this backend",
+)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("scale_dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize(
+    "shape, normalized_shape, group_size, is_strided",
+    [
+        ((3, 1), (1,), 128, False),
+        ((1, 256), (256,), 128, False),
+        ((4, 2048), (2048,), 128, False),
+        ((17, 256), (256,), 128, False),
+        ((33, 2048), (2048,), 128, False),
+        ((4097, 256), (256,), 128, False),
+        ((262145, 1), (1,), 128, False),
+        ((5, 257), (257,), 128, False),
+        ((2, 32768), (32768,), 128, False),
+        ((0, 256), (256,), 128, False),
+        ((2, 3, 256), (256,), 128, False),
+        ((2, 3, 4, 64), (4, 64), 64, False),
+        ((7, 256), (256,), 128, True),
+    ],
+)
+def test_rms_norm_w8a16_int8(
+    shape: tuple[int, ...],
+    normalized_shape: tuple[int, ...],
+    group_size: int,
+    is_strided: bool,
+    dtype: torch.dtype,
+    scale_dtype: torch.dtype,
+) -> None:
+    num_columns = int(np.prod(normalized_shape))
+    num_rows = int(np.prod(shape)) // num_columns
+    activation, _, weight_int8, weight_scale, _ = make_rms_norm_int8_inputs(
+        (num_rows, num_columns), dtype, flag_gems.device, group_size, scale_dtype
+    )
+    activation = activation.reshape(shape)
+    if is_strided:
+        activation = activation.t().contiguous().t()
+    else:
+        activation = activation.contiguous()
+    reference_input = utils.to_reference(activation).float()
+    reference_weight = (
+        utils.to_reference(weight_int8).float()
+        * utils.to_reference(weight_scale)
+        .float()
+        .repeat_interleave(group_size)[:num_columns]
+    ).reshape(normalized_shape)
+    reference_output = torch.nn.functional.rms_norm(
+        reference_input, normalized_shape, reference_weight, eps=1e-5
+    )
+    output = flag_gems.rms_norm_w8a16_int8(
+        activation,
+        normalized_shape,
+        weight_int8,
+        weight_scale,
+        eps=1e-5,
+        group_size=group_size,
+    )
+    utils.gems_assert_close(output, reference_output, dtype)
 
 
 @pytest.mark.rms_norm_w8a16_fp8

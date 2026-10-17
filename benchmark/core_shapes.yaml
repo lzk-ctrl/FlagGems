@@ -501,6 +501,17 @@ GenericBenchmarkExcluse3D:
     - [4096, 4096]
 
 # default 2d-only shapes
+rms_norm_w8a16_int8:
+  shapes:
+    - [1, 256]
+    - [4, 2048]
+    - [17, 256]
+    - [33, 2048]
+    - [32768, 256]
+    - [16384, 2048]
+    - [262144, 256]
+  shape_desc: "M, N"
+
 GenericBenchmark2DOnly:
   shapes:
     - [64, 64]
