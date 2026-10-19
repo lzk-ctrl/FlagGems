@@ -90,6 +90,7 @@ from .replication_pad2d_backward import (
     replication_pad2d_backward,
     replication_pad2d_backward_grad_input,
 )
+from .rms_norm_w8a16_int8 import rms_norm_w8a16_int8
 from .silu import silu, silu_, silu_backward
 from .softplus_backward import softplus_backward
 from .sort import sort, sort_stable
@@ -180,6 +181,7 @@ __all__ = [
     "renorm",
     "renorm_",
     "repeat",
+    "rms_norm_w8a16_int8",
     "replication_pad2d_backward",
     "replication_pad2d_backward_grad_input",
     "scaled_dot_product_attention",

@@ -31,6 +31,7 @@ as_strided_copy_out: test_as_strided_copy
 baddbmm_out: test_baddbmm
 
 # Compound / alternative names
+rms_norm_w8a16_int8: test_rms_norm
 arange_start_step: test_arange
 addmm_dtype: test_addmm
 all_dim: test_all
