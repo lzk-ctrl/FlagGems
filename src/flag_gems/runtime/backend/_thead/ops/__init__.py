@@ -38,8 +38,11 @@ from .diagonal_scatter import diagonal_scatter
 from .embedding_dense_backward import embedding_dense_backward
 from .erfc import erfc
 from .gcd_ import gcd, gcd_
-from .gdn_w8a16_int8 import gdn_w8a16_int8, quantize_gdn_state_int8
-from .gdn_w8a16_int8_prefill import chunk_gated_delta_rule_w8a16_int8
+from .gdn_w8a16_int8 import (
+    chunk_gated_delta_rule_w8a16_int8,
+    gdn_w8a16_int8,
+    quantize_gdn_state_int8,
+)
 from .grid_sampler_3d_backward import grid_sampler_3d_backward
 from .gru import gru
 from .index_copy_ import index_copy, index_copy_
