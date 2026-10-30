@@ -1040,6 +1040,7 @@ FusedRecurrentGatedDeltaRuleBenchmark:
     - [512]
   shape_desc: "(T,) many lengths"
 
+# Comprehensive adds all 110 captured shapes through Int8StateGdnBenchmark.
 gdn_w8a16_int8:
   shapes:
     - [1, 8192, 32, 128]
