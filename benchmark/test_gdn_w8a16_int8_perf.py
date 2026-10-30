@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import pytest
 import torch
 
@@ -20,8 +22,6 @@ from benchmark.base import Benchmark
 from tests.test_gdn_w8a16_int8 import (
     build_int8_gdn_decode_inputs,
     build_int8_gdn_prefill_inputs,
-    torch_int8_state_gdn_decode,
-    torch_int8_state_gdn_prefill,
 )
 
 
@@ -171,9 +171,31 @@ class Int8StateGdnBenchmark(Benchmark):
         )
 
     def get_input_iter(self, dtype):
+        # Resolve the compiled backends selected by vLLM-SAIL 0.31.0. Importing
+        # upstream FLA functions alone would select its Triton implementation.
+        from vllm_sail.attention.pla_decode import (
+            get_sail_cuda_pla_k_last,
+            get_sail_cuda_pla_k_last_packed,
+        )
+        from vllm_sail.attention.pla_prefill import get_sail_cuda_pla_prefill_fwd
+
+        packed_decode = get_sail_cuda_pla_k_last_packed()
+        update = get_sail_cuda_pla_k_last()
+        prefill = get_sail_cuda_pla_prefill_fwd()
+        if packed_decode is None or update is None or prefill is None:
+            raise RuntimeError(
+                "GDN benchmarks require the vLLM-SAIL PLA native backends"
+            )
+
         for shape in self.shapes:
             torch.manual_seed(42)
-            if shape[0] == "update":
+            if len(shape) == 7:
+                _, reference, args = build_int8_gdn_prefill_inputs(shape, dtype)
+                yield ("prefill", prefill, reference), args
+                continue
+
+            separate_qkv = shape[0] == "update"
+            if separate_qkv:
                 _, batch, tokens, query_heads, reduction, heads, columns, sequences = (
                     shape
                 )
@@ -182,11 +204,21 @@ class Int8StateGdnBenchmark(Benchmark):
                         "update shapes require B=1 and one token per sequence"
                     )
                 packed = 2 * query_heads * reduction + heads * columns
-                _, reference, args = build_int8_gdn_decode_inputs(
-                    (tokens, packed, heads, columns), dtype, reduction
-                )
+            else:
+                tokens, packed, heads, columns = shape
+                reduction = 128
+            _, reference, args = build_int8_gdn_decode_inputs(
+                (tokens, packed, heads, columns), dtype, reduction
+            )
+            mixed, a, b, a_log, bias, scale, state, out, indices, normalize = reference
+            native_bias = bias.to(dtype)
+            native_indices = indices.to(torch.int32)
+            cu_seqlens = torch.arange(
+                tokens + 1, device=mixed.device, dtype=torch.int32
+            )
+            if separate_qkv:
                 q, k, v = torch.split(
-                    args[0],
+                    mixed,
                     (query_heads * reduction, query_heads * reduction, heads * columns),
                     dim=-1,
                 )
@@ -195,20 +227,72 @@ class Int8StateGdnBenchmark(Benchmark):
                     k.reshape(1, tokens, query_heads, reduction).contiguous(),
                     v.reshape(1, tokens, heads, columns).contiguous(),
                 )
-                yield ("update", (qkv, *reference[1:])), (qkv, *args[1:])
-            elif len(shape) == 7:
-                _, reference, args = build_int8_gdn_prefill_inputs(shape, dtype)
-                yield ("prefill", reference), args
+                native_call = partial(
+                    update,
+                    a_log,
+                    a,
+                    native_bias,
+                    1.0,
+                    20.0,
+                    *qkv,
+                    b,
+                    state,
+                    native_indices,
+                    scale,
+                    normalize,
+                    cu_seqlens,
+                    False,
+                    False,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    False,
+                )
+                yield ("update", native_call, state), (qkv, *args[1:])
             else:
-                _, reference, args = build_int8_gdn_decode_inputs(shape, dtype)
-                yield ("decode", reference), args
+                native_call = partial(
+                    packed_decode,
+                    mixed,
+                    a,
+                    b,
+                    a_log,
+                    native_bias,
+                    1.0,
+                    20.0,
+                    scale,
+                    state,
+                    native_indices,
+                    out,
+                    normalize,
+                    cu_seqlens,
+                    False,
+                    False,
+                )
+                yield ("decode", native_call, state), args
 
 
-def torch_int8_state_gdn_baseline(reference, args):
-    if reference[0] == "prefill":
-        return torch_int8_state_gdn_prefill(**reference[1])
+def native_int8_state_gdn_baseline(reference, args):
+    kind, native_call, data = reference
+    if kind == "prefill":
+        # Include normalization, beta conversion and the native state-layout
+        # bridge in timing. Host sequence metadata is prepared for both routes.
+        result = native_call(
+            data["q"],
+            data["k"],
+            data["v"],
+            data["g"],
+            data["beta"].float(),
+            initial_state=data["initial_state"].transpose(-1, -2).contiguous(),
+            cu_seqlens=data["cu_seqlens"],
+            output_final_state=True,
+            normalize_qk=True,
+            raw_cu_seqlens=data["raw_cu_seqlens"],
+        )
+        return result[2], result[4].transpose(-1, -2)
     else:
-        return torch_int8_state_gdn_decode(*reference[1])
+        return native_call(), data
 
 
 def run_int8_state_gdn(reference, args):
@@ -231,7 +315,7 @@ def run_int8_state_gdn(reference, args):
 )
 def test_perf_gdn_w8a16_int8():
     bench = Int8StateGdnBenchmark(
-        op_name="gdn_w8a16_int8", torch_op=torch_int8_state_gdn_baseline
+        op_name="gdn_w8a16_int8", torch_op=native_int8_state_gdn_baseline
     )
     bench.set_gems(run_int8_state_gdn)
     bench.run()
