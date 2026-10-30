@@ -95,6 +95,7 @@ from .special_shifted_chebyshev_polynomial_w import (
 )
 from .tile import tile
 from .topk_w8a16_fp8 import topk_w8a16_fp8
+from .triangular_solve import triangular_solve, triangular_solve_out
 from .unbind_copy import unbind_copy
 
 __all__ = [
@@ -189,5 +190,7 @@ __all__ = [
     "special_shifted_chebyshev_polynomial_w",
     "tile",
     "topk_w8a16_fp8",
+    "triangular_solve",
+    "triangular_solve_out",
     "unbind_copy",
 ]
