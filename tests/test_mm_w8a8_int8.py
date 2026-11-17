@@ -29,6 +29,8 @@ SHAPES = [
     (256, 1, 2048),
     (2, 32, 32),
     (8, 64, 64),
+    (8, 128, 6144),
+    (8, 128, 8192),
     (16, 128, 64),
     (32, 128, 128),
     (64, 256, 128),
@@ -56,6 +58,7 @@ SHAPES = [
 @pytest.mark.mm_w8a8
 @pytest.mark.mm_w8a8_out
 def test_mm_w8a8_int8(shape, dtype):
+    torch.manual_seed(0)
     m, n, k = shape
     a = torch.randint(-128, 128, (m, k), device=flag_gems.device, dtype=torch.int8)
     b = torch.randint(-128, 128, (n, k), device=flag_gems.device, dtype=torch.int8).t()
@@ -97,7 +100,9 @@ def test_mm_w8a8_int8_strides(layout):
 @pytest.mark.parametrize("use_graph", [False, True])
 @pytest.mark.parametrize("use_out", [False, True])
 @pytest.mark.mm_w8a8
-@pytest.mark.parametrize("shape", [(16, 32, 128), (1, 64, 2048), (128, 1, 2048)])
+@pytest.mark.parametrize(
+    "shape", [(16, 32, 128), (1, 64, 2048), (128, 1, 2048), (8, 128, 6144)]
+)
 def test_mm_w8a8_int8_updates(use_graph, use_out, shape):
     m, n, k = shape
     a = torch.ones((m, k), device=flag_gems.device, dtype=torch.int8)
@@ -195,6 +200,7 @@ def _assert_reference(a, b, sa, sb, out, bias=None):
         (1, 17, 32),
         (17, 1, 128),
         (3, 35, 128),
+        (4, 127, 4100),
         (17, 35, 67),
         (64, 128, 128),
         (1, 32769, 2048),
@@ -205,6 +211,7 @@ def _assert_reference(a, b, sa, sb, out, bias=None):
 @pytest.mark.parametrize("out_dtype", [torch.bfloat16, torch.float16, torch.float32])
 @pytest.mark.parametrize("scales", ["tensor", "axis", "mixed_a", "mixed_b"])
 def test_scaled_bias(shape, out_dtype, scales):
+    torch.manual_seed(0)
     m, n, k = shape
     a = torch.randint(-128, 128, (m, k), device=flag_gems.device, dtype=torch.int8)
     b = torch.randint(-128, 128, (n, k), device=a.device, dtype=torch.int8).t()
