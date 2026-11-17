@@ -443,7 +443,8 @@ def _run_mm(a, b, scale_a, scale_b, out, m, n, k, bias=None):
         and b.data_ptr() % 4 == 0
     ):
         if small_long_k:
-            r, warps = (1 if m == 1 else 4 if n <= 128 else 2), 4
+            # Limit live DP4A values to avoid spills during long reductions.
+            r, warps = (1 if m == 1 else 2), 4
         elif vector_dp4a:
             r, warps = (4 if k <= 768 else 2), 1
         else:
